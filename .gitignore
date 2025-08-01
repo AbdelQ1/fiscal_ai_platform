@@ -1,3 +1,58 @@
+# === ENVIRONNEMENT PYTHON ===
+venv/
 venv_fiscal_ai/
 __pycache__/
+*.py[cod]
+*.so
+
+# === ENVIRONNEMENT VIRTUALENV TOOLS ===
+pip-log.txt
+pip-delete-this-directory.txt
+
+# === FICHIERS TEMPORAIRES ===
+*.log
+*.tmp
+*.swp
+*.bak
+
+# === FICHIERS DE CONFIG SECRETS ===
 .env
+.env.*
+
+# === OUTILS D'IA / NOTEBOOKS ===
+.ipynb_checkpoints/
+notebooks/__pycache__/
+
+# === FICHIERS IDE & SYSTEME ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# === BDD LOCALE OU DUMPS ===
+*.sqlite3
+*.db
+*.sql
+*.csv
+*.json
+*.yaml
+*.yml
+!configs/*.json  # sauf fichiers JSON de config validés
+!configs/*.yaml
+
+# === MODELES/POIDS IA ===
+*.pth
+*.pt
+*.h5
+*.onnx
+
+# === TESTS ===
+htmlcov/
+coverage.xml
+.tox/
+.pytest_cache/
+
+# === OUTPUTS CUSTOM ===
+output/
+build/
+dist/
