@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, B
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
+from sqlalchemy import text
 import logging
 
 Base = declarative_base()
@@ -203,7 +204,7 @@ class DatabaseManager:
         """Vérification de l'état de la base de données"""
         try:
             session = self.get_session()
-            session.execute("SELECT 1")
+            session.execute(text("SELECT 1"))
             session.close()
             return True
         except Exception as e:

@@ -1,0 +1,2 @@
+from api.routes import ui_bridge
+app.include_router(ui_bridge.router)

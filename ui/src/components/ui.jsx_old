@@ -1,0 +1,97 @@
+import React from "react";
+
+// Petits composants UI (aucune dépendance externe)
+export function Badge({ children, tone = "neutral" }) {
+  const colors = {
+    ok: "#10b981",
+    failed: "#ef4444",
+    neutral: "#6b7280",
+  };
+  const bg = colors[tone] ?? colors.neutral;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "2px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 600,
+        color: "white",
+        background: bg,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function Button({ children, onClick, variant = "primary" }) {
+  const styles =
+    variant === "secondary"
+      ? {
+          background: "#fff",
+          color: "#111827",
+          border: "1px solid #e5e7eb",
+        }
+      : {
+          background: "#2563eb",
+          color: "white",
+          border: "1px solid #1d4ed8",
+        };
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        ...styles,
+        borderRadius: 10,
+        padding: "10px 14px",
+        fontWeight: 600,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function Card({ title, right, children }) {
+  return (
+    <section
+      style={{
+        background: "white",
+        border: "1px solid #e5e7eb",
+        borderRadius: 16,
+        padding: 18,
+      }}
+    >
+      {(title || right) && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 8,
+          }}
+        >
+          {title && (
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>
+              {title}
+            </h2>
+          )}
+          {right}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+export function Page({ children }) {
+  return (
+    <div style={{ maxWidth: 980, margin: "32px auto", padding: "0 16px" }}>
+      {children}
+    </div>
+  );
+}

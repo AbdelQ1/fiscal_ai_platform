@@ -1,0 +1,136 @@
+from typing import Optional, Dict, Any, List
+from pathlib import Path
+import logging
+import warnings
+import contextlib
+import re
+
+class InvoiceProcessor:
+    def __init__(self, config: dict):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+
+    @contextlib.contextmanager
+    def silent_pdf_processing(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            pdf_loggers = ["pdfminer", "PyPDF2", "pdfplumber"]
+            old_levels = {name: logging.getLogger(name).level for name in pdf_loggers}
+            for name in pdf_loggers:
+                logging.getLogger(name).setLevel(logging.ERROR)
+            try:
+                yield
+            finally:
+                for name, level in old_levels.items():
+                    logging.getLogger(name).setLevel(level)
+
+    def extract_text_adaptive(self, file_path: Path) -> str:
+        native_text = self._try_native_pdf_text(file_path)
+        doc_type = self._detect_extraction_strategy(file_path, native_text)
+        if doc_type == 'amazon' and native_text:
+            self.logger.info(f"✅ Amazon - Texte natif utilisé ({len(native_text)} car.)")
+            return native_text
+        elif doc_type == 'scanned':
+            self.logger.info("🔍 Document scanné - OCR visuel")
+            return self._extract_text_with_ocr(file_path)
+        else:
+            if native_text:
+                self.logger.info(f"✅ Texte natif utilisé ({len(native_text)} car.)")
+                return native_text
+            self.logger.info("⚠️ Fallback OCR visuel")
+            return self._extract_text_with_ocr(file_path)
+
+    def _try_native_pdf_text(self, file_path: Path) -> Optional[str]:
+        with self.silent_pdf_processing():
+            try:
+                import pdfplumber
+                with pdfplumber.open(file_path) as pdf:
+                    text = "\n".join([page.extract_text() or '' for page in pdf.pages])
+                    return text.strip() if text and len(text.strip()) > 50 else None
+            except Exception:
+                try:
+                    import PyPDF2
+                    with open(file_path, 'rb') as f:
+                        reader = PyPDF2.PdfReader(f)
+                        text = "\n".join([page.extract_text() or '' for page in reader.pages])
+                    return text.strip() if text and len(text.strip()) > 50 else None
+                except Exception:
+                    pass
+        return None
+
+    def _detect_extraction_strategy(self, file_path: Path, native_text: Optional[str]) -> str:
+        filename = file_path.name.lower()
+        if any(k in filename for k in ['bosch', 'amazon']):
+            return 'amazon'
+        if any(k in filename for k in ['vtt', 'specialized']):
+            return 'scanned'
+        if native_text:
+            if 'Numéro de la facture' in native_text:
+                return 'amazon'
+            elif len(native_text) < 500:
+                return 'scanned'
+        return 'hybrid'
+
+    def _extract_text_with_ocr(self, file_path: Path) -> str:
+        try:
+            from ..base_ocr import FiscalOCRModule
+            config = {
+                "languages": self.config.get('languages', ['fra', 'eng']),
+                "confidence_threshold": self.config.get('confidence_threshold', 0.65),
+                "preprocessing": self.config.get('preprocessing', ["contrast", "denoise", "deskew"]),
+                "fiscal_mode": False
+            }
+            ocr = FiscalOCRModule(config)
+            result = ocr.process_document(file_path, "invoice")
+            return result.text if result.success else ""
+        except Exception as e:
+            self.logger.error(f"Erreur OCR: {e}")
+            return ""
+
+    def structure_results(self, extracted_data: Dict[str, Any]) -> 'InvoiceExtractionResult':
+        from ..configurable_invoice_ocr import InvoiceExtractionResult
+        result = InvoiceExtractionResult()
+        amounts_raw = extracted_data.get('currency_amounts', [])
+        vat_number = extracted_data.get('numero_tva', None)
+        result.amounts_found = amounts_raw
+        result.total_amount = self._choose_total_amount(amounts_raw)
+        result.subtotal_ht = None
+        result.vat_amount = None
+        result.invoice_number = extracted_data.get('invoice_number')
+        result.invoice_date = extracted_data.get('invoice_date')
+        numero_tva = extracted_data.get('numero_tva')
+        result.legal_identifiers = {'numero_tva': numero_tva} if numero_tva else {}
+        confidence = 0.0
+        if result.total_amount and result.total_amount > 1:
+            confidence += 0.4
+        if result.invoice_date:
+            confidence += 0.2
+        if result.invoice_number:
+            confidence += 0.2
+        if numero_tva:
+            confidence += 0.2
+        result.extraction_confidence = min(confidence, 1.0)
+        result.extracted_entities = {
+            'total_amount': result.total_amount,
+            'subtotal_ht': result.subtotal_ht,
+            'vat_amount': result.vat_amount,
+            'invoice_date': result.invoice_date,
+            'invoice_number': result.invoice_number,
+            'numero_tva': numero_tva,
+            'currency_amounts': amounts_raw
+        }
+        return result
+
+    def _choose_total_amount(self, all_amounts_texts: List[str]) -> Optional[float]:
+        def parse_amt(s: str) -> Optional[float]:
+            s = s.replace('\xa0', '').replace(' ', '').replace('EUR', '').replace('€', '').replace(',', '.')
+            try:
+                return float(s)
+            except Exception:
+                return None
+        # On prend le premier montant "labelisé"
+        for a in all_amounts_texts:
+            val = parse_amt(a)
+            if val and 1 < val < 1_000_000:
+                return val
+        return None

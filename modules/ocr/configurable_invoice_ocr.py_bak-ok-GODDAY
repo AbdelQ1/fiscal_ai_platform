@@ -1,0 +1,214 @@
+# modules/ocr/configurable_invoice_ocr.py
+"""
+Module OCR configurable - Version finale, robuste et fonctionnelle.
+Ce code est le résultat final de notre débogage, optimisé pour
+une extraction fiable sur vos documents.
+"""
+
+import re
+from typing import Dict, List, Optional, Any
+from pathlib import Path
+import time
+import logging
+from dataclasses import dataclass
+
+@dataclass
+class InvoiceExtractionResult:
+    """Structure de données pour un résultat d'extraction propre et complet."""
+    invoice_number: Optional[str] = None
+    invoice_date: Optional[str] = None
+    amounts_found: List[float] = None
+    total_amount: Optional[float] = None
+    subtotal_ht: Optional[float] = None
+    vat_amount: Optional[float] = None
+    legal_identifiers: Dict[str, str] = None
+    extracted_entities: Dict[str, Any] = None
+    extraction_confidence: float = 0.0
+    processing_time: float = 0.0
+    patterns_matched: List[str] = None
+    success: bool = True
+    error_message: str = ""
+
+class ConfigurableInvoiceOCR:
+    """OCR configurable fiable, optimisé pour les factures françaises."""
+
+    def __init__(self, config: Dict):
+        self.config = config
+        self.logger = self._setup_logging()
+        
+        self.base_ocr_config = {
+            "languages": config.get('languages', ['fra', 'eng']),
+            "confidence_threshold": config.get('confidence_threshold', 0.65),
+            "preprocessing": config.get('preprocessing', ["contrast", "denoise", "deskew"]),
+            "fiscal_mode": False
+        }
+        
+        self.extraction_patterns = self._load_configurable_patterns()
+        
+        self.logger.info("🔧 Module OCR Configurable Finalisé Initialisé.")
+        self.logger.info(f"   - Patterns chargés: {len(self.extraction_patterns)} catégories")
+        self.logger.info(f"   - Configuration OCR stable: {self.base_ocr_config}")
+
+    def _setup_logging(self):
+        """Configure un logger simple pour un meilleur suivi."""
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        return logging.getLogger(__name__)
+
+    def _load_configurable_patterns(self) -> Dict[str, Dict]:
+        """Charge un jeu de patterns complet et robuste, incluant le n° de commande Amazon."""
+        patterns = {
+            'currency_amounts': {
+                'patterns': [r'(\d{1,6}[,\.]\d{2})'],
+                'flags': re.MULTILINE, 'description': 'Montants'
+            },
+            'french_dates': {
+                'patterns': [
+                    r'(\d{1,2}\s+(?:janvier|février|fevrier|mars|avril|mai|juin|juillet|aout|août|septembre|octobre|novembre|décembre)\s+\d{4})',
+                    r'(\d{2}/\d{2}/\d{4})'
+                ],
+                'flags': re.IGNORECASE, 'description': 'Dates'
+            },
+            'invoice_numbers': {
+                'patterns': [
+                    r'(\d{3}-\d{7}-\d{7})', # **FIX FINAL : Pattern pour le n° de commande Amazon**
+                    r'facture\s*n°?[:\s]*([A-Z0-9\-]{6,})',
+                    r'commande\s*n°?[:\s]*([A-Z0-9\-]{6,})'
+                ],
+                'flags': re.IGNORECASE, 'description': 'Numéros de facture/commande'
+            },
+            'vat_numbers': {
+                'patterns': [r'(FR\d{11})'],
+                'flags': re.IGNORECASE, 'description': 'Numéros de TVA'
+            }
+        }
+        return patterns
+
+    def process_invoice(self, file_path: Path) -> InvoiceExtractionResult:
+        """Point d'entrée principal pour traiter une facture."""
+        start_time = time.time()
+        try:
+            self.logger.info(f"--- Début du traitement pour : {file_path.name} ---")
+            raw_text = self._extract_text_with_base_ocr(file_path)
+            if not raw_text or len(raw_text) < 200:
+                raise ValueError(f"Extraction OCR a produit un texte trop court ({len(raw_text)} caractères).")
+
+            result = self._extract_structured_data(raw_text)
+            result.processing_time = time.time() - start_time
+            result.success = True
+            self.logger.info(f"--- Extraction terminée avec une confiance de {result.extraction_confidence:.2f} ---")
+            return result
+        except Exception as e:
+            self.logger.error(f"Erreur critique lors du traitement : {e}", exc_info=True)
+            return InvoiceExtractionResult(success=False, error_message=str(e), processing_time=time.time() - start_time)
+
+    def _extract_text_with_base_ocr(self, file_path: Path) -> str:
+        """Utilise votre module OCR de base."""
+        try:
+            from .base_ocr import FiscalOCRModule
+            ocr = FiscalOCRModule(self.base_ocr_config)
+            result = ocr.process_document(file_path, "invoice")
+            self.logger.info(f"Texte extrait ({len(result.text)} car.) avec confiance de {result.confidence:.2f}")
+            return result.text if result.success else ""
+        except ImportError:
+            self.logger.error("Le module 'base_ocr' est introuvable.")
+            return ""
+        except Exception as e:
+            self.logger.error(f"Erreur dans le module OCR de base: {e}")
+            return ""
+
+    def _parse_float(self, value_str: str) -> Optional[float]:
+        """Nettoie et convertit une chaîne en float de manière robuste."""
+        try:
+            cleaned_str = value_str.replace(' ', '').replace(',', '.')
+            if cleaned_str.count('.') > 1:
+                 cleaned_str = cleaned_str.replace('.', '', cleaned_str.count('.') - 1)
+            return float(cleaned_str)
+        except (ValueError, TypeError):
+            return None
+
+    def _extract_and_select_amounts(self, amounts_raw: List[str]):
+        """Logique robuste pour identifier Total, HT et TVA."""
+        all_amounts = sorted(list(set(self._parse_float(v) for v in amounts_raw if self._parse_float(v))), reverse=True)
+        
+        total, ht, tva = None, None, None
+        
+        if not all_amounts:
+            return [], None, None, None
+
+        total = all_amounts[0]
+        self.logger.info(f"Montants détectés et triés: {all_amounts}")
+        
+        if len(all_amounts) >= 3:
+            t_candidate, ht_candidate, tva_candidate = all_amounts[:3]
+            if abs(t_candidate - (ht_candidate + tva_candidate)) < 0.1:
+                total, ht, tva = t_candidate, ht_candidate, tva_candidate
+                self.logger.info(f"Trio TTC/HT/TVA cohérent trouvé: Total={total}, HT={ht}, TVA={tva}")
+        
+        self.logger.info(f"Montant total final sélectionné: {total}")
+        return all_amounts, total, ht, tva
+
+    def _extract_structured_data(self, text: str) -> InvoiceExtractionResult:
+        """Applique les regex et la logique de sélection intelligente."""
+        result = InvoiceExtractionResult(patterns_matched=[])
+        extracted_data = {}
+
+        for name, config in self.extraction_patterns.items():
+            matches = []
+            for pattern_str in config['patterns']:
+                try:
+                    pattern = re.compile(pattern_str, config.get('flags', re.IGNORECASE))
+                    found = pattern.findall(text)
+                    for match in found:
+                        match_text = match[0] if isinstance(match, tuple) and match else match
+                        if isinstance(match_text, str) and match_text.strip():
+                            matches.append(match_text.strip())
+                except re.error as e:
+                    self.logger.warning(f"Pattern invalide pour {name}: {e}")
+            
+            if matches:
+                extracted_data[name] = list(set(matches))
+                result.patterns_matched.append(name)
+        
+        return self._map_extracted_data_to_result(result, extracted_data)
+
+    def _map_extracted_data_to_result(self, result: InvoiceExtractionResult, extracted_data: Dict) -> InvoiceExtractionResult:
+        """Mappe les données extraites vers la structure de résultat finale."""
+        self.logger.info(f"Données brutes extraites par regex: {extracted_data}")
+
+        raw_amounts = extracted_data.get('currency_amounts', [])
+        amounts, total, ht, tva = self._extract_and_select_amounts(raw_amounts)
+        result.amounts_found, result.total_amount, result.subtotal_ht, result.vat_amount = amounts, total, ht, tva
+
+        vat_number = extracted_data.get('vat_numbers', [None])[0]
+        result.legal_identifiers = {'vat_number': vat_number} if vat_number else {}
+        
+        invoice_number = None
+        if 'invoice_numbers' in extracted_data:
+            candidates = [c for c in extracted_data['invoice_numbers'] if c != vat_number]
+            if candidates:
+                invoice_number = max(candidates, key=len)
+        result.invoice_number = invoice_number
+        
+        result.invoice_date = extracted_data.get('french_dates', [None])[0]
+        
+        confidence = 0.0
+        if result.total_amount and result.total_amount > 1: confidence += 0.4
+        if result.invoice_date: confidence += 0.2
+        if result.invoice_number: confidence += 0.2
+        if result.legal_identifiers.get('vat_number'): confidence += 0.2
+        result.extraction_confidence = min(confidence, 1.0)
+        
+        result.extracted_entities = {
+            'total_amount': result.total_amount, 'subtotal_ht': result.subtotal_ht, 'vat_amount': result.vat_amount,
+            'invoice_date': result.invoice_date, 'invoice_number': result.invoice_number,
+            'vat_number': result.legal_identifiers.get('vat_number')
+        }
+        self.logger.info(f"Résultat final de l'extraction: {result.extracted_entities}")
+        return result
+
+    def get_configuration_info(self) -> Dict:
+        """Retourne des informations sur la configuration actuelle."""
+        return {
+            'patterns_loaded': len(self.extraction_patterns),
+            'pattern_categories': list(self.extraction_patterns.keys()),
+        }

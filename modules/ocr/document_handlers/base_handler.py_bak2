@@ -1,0 +1,72 @@
+# modules/ocr/document_handlers/base_handler.py
+from abc import ABC, abstractmethod
+from typing import Dict, List, Any, Optional
+from pathlib import Path  # ⚠️ manquait l'import de Path
+import re
+
+class BaseDocumentHandler(ABC):
+    def __init__(self, config: Dict):
+        self.config = config
+
+    @abstractmethod
+    def detect_document_type(self, file_path: Path, text_sample: str) -> str:
+        pass
+
+    @abstractmethod
+    def process_document(self, file_path: Path, text: str) -> Dict[str, Any]:
+        pass
+
+    def validate_extraction(self, extracted_data: Dict) -> bool:
+        return bool(extracted_data)
+
+class DocumentHandler(ABC):
+    """Interface de base pour tous les gestionnaires de documents"""
+    
+    def __init__(self, document_type: str, supported_extensions: List[str], 
+                 confidence_threshold: float = 0.75, 
+                 preprocessing_options: Optional[List[str]] = None):
+        """
+        Initialisation du gestionnaire de document
+        
+        Args:
+            document_type: Type de document géré
+            supported_extensions: Extensions de fichiers supportées
+            confidence_threshold: Seuil de confiance minimum
+            preprocessing_options: Options de préprocessing
+        """
+        self.document_type = document_type
+        self.supported_extensions = supported_extensions
+        self.confidence_threshold = confidence_threshold
+        self.preprocessing_options = preprocessing_options or ['contrast', 'denoise']
+    
+    @abstractmethod
+    def get_patterns(self) -> Dict[str, re.Pattern]:
+        """Retourne les patterns de reconnaissance pour ce type de document"""
+        pass
+    
+    @abstractmethod
+    def get_tesseract_config(self) -> str:
+        """Configuration Tesseract optimisée pour ce type de document"""
+        pass
+    
+    @abstractmethod
+    def postprocess_entities(self, entities: Dict, text: str) -> Dict:
+        """Post-traitement spécialisé des entités extraites"""
+        pass
+    
+    @abstractmethod
+    def validate_document(self, text: str) -> float:
+        """Score de confiance que le texte correspond à ce type de document"""
+        pass
+    
+    def get_preprocessing_config(self) -> List[str]:
+        """Retourne la configuration de préprocessing pour ce type"""
+        return self.preprocessing_options
+    
+    def is_supported_file(self, filename: str) -> bool:
+        """Vérifie si le fichier est supporté par ce handler"""
+        return any(filename.lower().endswith(ext) for ext in self.supported_extensions)
+    
+    def __repr__(self) -> str:
+        """Représentation string du handler"""
+        return f"{self.__class__.__name__}(type='{self.document_type}', extensions={self.supported_extensions})"
